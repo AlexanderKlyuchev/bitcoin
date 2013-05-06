@@ -4308,11 +4308,11 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
         bool fSortedByFee = (nBlockPrioritySize <= 0);
 
 
-        while (!vecOwnTransactions.empty())
-        {
-           CTransaction& tx = vecPriority.front();
 
-           vecOwnTransactions.pop_back();
+       for(std::vector<A>::iterator it = vecOwnTransactions.begin();
+        	        it != vecOwnTransactions.end(); ++it)
+        {
+           CTransaction& tx = *it;
 
            // second layer cached modifications just for this transaction
            CCoinsViewCache viewTemp(view, true);
