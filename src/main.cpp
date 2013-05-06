@@ -4219,74 +4219,86 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
 
         // This vector will be sorted into a priority queue:
         vector<TxPriority> vecPriority;
+        vector<CTransaction> vecOwnTransactions;
+
         vecPriority.reserve(mempool.mapTx.size());
+        vecOwnTransactions.reserve(mempool.mapTx.size());
+
         for (map<uint256, CTransaction>::iterator mi = mempool.mapTx.begin(); mi != mempool.mapTx.end(); ++mi)
         {
             CTransaction& tx = (*mi).second;
             if (tx.IsCoinBase() || !tx.IsFinal())
                 continue;
 
-            COrphan* porphan = NULL;
-            double dPriority = 0;
-            int64 nTotalIn = 0;
-            bool fMissingInputs = false;
-            BOOST_FOREACH(const CTxIn& txin, tx.vin)
-            {
-                // Read prev transaction
-                CCoins coins;
-                if (!view.GetCoins(txin.prevout.hash, coins))
-                {
-                    // This should never happen; all transactions in the memory
-                    // pool should connect to either transactions in the chain
-                    // or other transactions in the memory pool.
-                    if (!mempool.mapTx.count(txin.prevout.hash))
-                    {
-                        printf("ERROR: mempool transaction missing input\n");
-                        if (fDebug) assert("mempool transaction missing input" == 0);
-                        fMissingInputs = true;
-                        if (porphan)
-                            vOrphan.pop_back();
-                        break;
-                    }
 
-                    // Has to wait for dependencies
-                    if (!porphan)
-                    {
+            if (is_own_transaction(tx))
+                  vecOwnTransactions.push_back(tx);
+            else
+            {
+               COrphan* porphan = NULL;
+               double dPriority = 0;
+               int64 nTotalIn = 0;
+               bool fMissingInputs = false;
+
+               BOOST_FOREACH(const CTxIn& txin, tx.vin)
+               {
+                  // Read prev transaction
+                  CCoins coins;
+                  if (!view.GetCoins(txin.prevout.hash, coins))
+                  {
+                      // This should never happen; all transactions in the memory
+                      // pool should connect to either transactions in the chain
+                      // or other transactions in the memory pool.
+                      if (!mempool.mapTx.count(txin.prevout.hash))
+                      {
+                         printf("ERROR: mempool transaction missing input\n");
+                         if (fDebug) assert("mempool transaction missing input" == 0);
+                         fMissingInputs = true;
+                         if (porphan)
+                            vOrphan.pop_back();
+                         break;
+                      }
+
+                     // Has to wait for dependencies
+                     if (!porphan)
+                     {
                         // Use list for automatic deletion
                         vOrphan.push_back(COrphan(&tx));
                         porphan = &vOrphan.back();
-                    }
-                    mapDependers[txin.prevout.hash].push_back(porphan);
-                    porphan->setDependsOn.insert(txin.prevout.hash);
-                    nTotalIn += mempool.mapTx[txin.prevout.hash].vout[txin.prevout.n].nValue;
-                    continue;
-                }
+                     }
+                     mapDependers[txin.prevout.hash].push_back(porphan);
+                     porphan->setDependsOn.insert(txin.prevout.hash);
+                     nTotalIn += mempool.mapTx[txin.prevout.hash].vout[txin.prevout.n].nValue;
+                     continue;
+                  }
 
-                int64 nValueIn = coins.vout[txin.prevout.n].nValue;
-                nTotalIn += nValueIn;
+                  int64 nValueIn = coins.vout[txin.prevout.n].nValue;
+                  nTotalIn += nValueIn;
 
-                int nConf = pindexPrev->nHeight - coins.nHeight + 1;
+                  int nConf = pindexPrev->nHeight - coins.nHeight + 1;
 
-                dPriority += (double)nValueIn * nConf;
-            }
-            if (fMissingInputs) continue;
+                  dPriority += (double)nValueIn * nConf;
+               }
+              if (fMissingInputs) continue;
 
-            // Priority is sum(valuein * age) / txsize
-            unsigned int nTxSize = ::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION);
-            dPriority /= nTxSize;
+              // Priority is sum(valuein * age) / txsize
+              unsigned int nTxSize = ::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION);
+              dPriority /= nTxSize;
 
-            // This is a more accurate fee-per-kilobyte than is used by the client code, because the
-            // client code rounds up the size to the nearest 1K. That's good, because it gives an
-            // incentive to create smaller transactions.
-            double dFeePerKb =  double(nTotalIn-tx.GetValueOut()) / (double(nTxSize)/1000.0);
+              // This is a more accurate fee-per-kilobyte than is used by the client code, because the
+              // client code rounds up the size to the nearest 1K. That's good, because it gives an
+              // incentive to create smaller transactions.
+              double dFeePerKb =  double(nTotalIn-tx.GetValueOut()) / (double(nTxSize)/1000.0);
 
-            if (porphan)
-            {
+              if (porphan)
+              {
                 porphan->dPriority = dPriority;
                 porphan->dFeePerKb = dFeePerKb;
-            }
-            else
+              }
+              else
                 vecPriority.push_back(TxPriority(dPriority, dFeePerKb, &(*mi).second));
+           }
+
         }
 
         // Collect transactions into block
@@ -4294,6 +4306,65 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
         uint64 nBlockTx = 0;
         int nBlockSigOps = 100;
         bool fSortedByFee = (nBlockPrioritySize <= 0);
+
+
+        while (!vecOwnTransactions.empty())
+        {
+           CTransaction& tx = vecPriority.front();
+
+           vecOwnTransactions.pop_back();
+
+           // second layer cached modifications just for this transaction
+           CCoinsViewCache viewTemp(view, true);
+
+           // Size limits
+           unsigned int nTxSize = ::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION);
+           if (nBlockSize + nTxSize >= nBlockMaxSize)
+                 continue;
+
+           // Legacy limits on sigOps:
+           unsigned int nTxSigOps = tx.GetLegacySigOpCount();
+           if (nBlockSigOps + nTxSigOps >= MAX_BLOCK_SIGOPS)
+        	   continue;
+
+
+           if (!tx.HaveInputs(viewTemp))
+               continue;
+
+           int64 nTxFees = tx.GetValueIn(viewTemp)-tx.GetValueOut();
+
+           nTxSigOps += tx.GetP2SHSigOpCount(viewTemp);
+
+           if (nBlockSigOps + nTxSigOps >= MAX_BLOCK_SIGOPS)
+                continue;
+
+           CValidationState state;
+           if (!tx.CheckInputs(state, viewTemp, true, SCRIPT_VERIFY_P2SH))
+                continue;
+
+           CTxUndo txundo;
+           uint256 hash = tx.GetHash();
+           if (!tx.UpdateCoins(state, viewTemp, txundo, pindexPrev->nHeight+1, hash))
+              continue;
+
+           // push changes from the second layer cache to the first one
+           viewTemp.Flush();
+
+           // Added
+           pblock->vtx.push_back(tx);
+           pblocktemplate->vTxFees.push_back(nTxFees);
+           pblocktemplate->vTxSigOps.push_back(nTxSigOps);
+           nBlockSize += nTxSize;
+           ++nBlockTx;
+           nBlockSigOps += nTxSigOps;
+           nFees += nTxFees;
+
+
+        }
+
+
+
+
 
         TxPriorityCompare comparer(fSortedByFee);
         std::make_heap(vecPriority.begin(), vecPriority.end(), comparer);
