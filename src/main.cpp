@@ -4217,12 +4217,16 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
         map<uint256, vector<COrphan*> > mapDependers;
         bool fPrintPriority = GetBoolArg("-printpriority");
 
-        // This vector will be sorted into a priority queue:
-        vector<TxPriority> vecPriority;
-        vector<CTransaction> vecOwnTransactions;
+        // This vector will be sorted into a priority queue
+        //(changed to vector of pointers to avoid copy constructor calls in case of initial reserved size is not enough):
+        vector<TxPriority*> vecPriority;
+        vector<CTransaction*> vecOwnTransactions;
 
-        vecPriority.reserve(mempool.mapTx.size());
-        vecOwnTransactions.reserve(mempool.mapTx.size());
+        //suppose that both kind of transactions is as 50/50
+        //in such case vector reallocation may be just once
+        //but we spent less memory at least on mempool.mapTx.size()/2
+        vecPriority.reserve(mempool.mapTx.size()/2);
+        vecOwnTransactions.reserve(mempool.mapTx.size()/2);
 
         for (map<uint256, CTransaction>::iterator mi = mempool.mapTx.begin(); mi != mempool.mapTx.end(); ++mi)
         {
@@ -4232,7 +4236,7 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
 
 
             if (is_own_transaction(tx))
-                  vecOwnTransactions.push_back(tx);
+                  vecOwnTransactions.push_back(&tx);
             else
             {
                COrphan* porphan = NULL;
@@ -4296,7 +4300,7 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
                 porphan->dFeePerKb = dFeePerKb;
               }
               else
-                vecPriority.push_back(TxPriority(dPriority, dFeePerKb, &(*mi).second));
+                vecPriority.push_back(&TxPriority(dPriority, dFeePerKb, &(*mi).second));
            }
 
         }
@@ -4309,10 +4313,13 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
 
 
 
+        //both following cycles looks similar
+        //i left them separately to avoid changing old functionality
+
        for(std::vector<A>::iterator it = vecOwnTransactions.begin();
         	        it != vecOwnTransactions.end(); ++it)
         {
-           CTransaction& tx = *it;
+           CTransaction& tx = **it;
 
            // second layer cached modifications just for this transaction
            CCoinsViewCache viewTemp(view, true);
@@ -4363,18 +4370,15 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
         }
 
 
-
-
-
         TxPriorityCompare comparer(fSortedByFee);
         std::make_heap(vecPriority.begin(), vecPriority.end(), comparer);
 
         while (!vecPriority.empty())
         {
             // Take highest priority transaction off the priority queue:
-            double dPriority = vecPriority.front().get<0>();
-            double dFeePerKb = vecPriority.front().get<1>();
-            CTransaction& tx = *(vecPriority.front().get<2>());
+            double dPriority = vecPriority.front()->get<0>();
+            double dFeePerKb = vecPriority.front()->get<1>();
+            CTransaction& tx = *(vecPriority.front()->get<2>());
 
             std::pop_heap(vecPriority.begin(), vecPriority.end(), comparer);
             vecPriority.pop_back();
