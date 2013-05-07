@@ -4317,7 +4317,7 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
         //both following cycles looks similar
         //i left them separately to avoid changing old functionality
 
-       for(std::vector<A>::iterator it = vecOwnTransactions.begin();
+       for(std::vector<CTransaction*>::iterator it = vecOwnTransactions.begin();
         	        it != vecOwnTransactions.end(); ++it)
         {
            CTransaction& tx = **it;
