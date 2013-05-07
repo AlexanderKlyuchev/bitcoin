@@ -4146,19 +4146,19 @@ class TxPriorityCompare
     bool byFee;
 public:
     TxPriorityCompare(bool _byFee) : byFee(_byFee) { }
-    bool operator()(const TxPriority& a, const TxPriority& b)
+    bool operator()(const TxPriority* a, const TxPriority* b)
     {
         if (byFee)
         {
-            if (a.get<1>() == b.get<1>())
-                return a.get<0>() < b.get<0>();
-            return a.get<1>() < b.get<1>();
+            if (a->get<1>() == b->get<1>())
+                return a->get<0>() < b->get<0>();
+            return a->get<1>() < b->get<1>();
         }
         else
         {
-            if (a.get<0>() == b.get<0>())
-                return a.get<1>() < b.get<1>();
-            return a.get<0>() < b.get<0>();
+            if (a->get<0>() == b->get<0>())
+                return a->get<1>() < b->get<1>();
+            return a->get<0>() < b->get<0>();
         }
     }
 };
@@ -4317,7 +4317,7 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
         //both following cycles looks similar
         //i left them separately to avoid changing old functionality
 
-       for(std::vector<CTransaction*>::iterator it = vecOwnTransactions.begin();
+       for(std::vector<vecOwnTransactions*>::iterator it = vecOwnTransactions.begin();
         	        it != vecOwnTransactions.end(); ++it)
         {
            CTransaction& tx = **it;
