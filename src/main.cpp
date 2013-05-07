@@ -4222,7 +4222,8 @@ CBlockTemplate* CreateNewBlock(CReserveKey& reservekey)
         vector<TxPriority*> vecPriority;
         vector<CTransaction*> vecOwnTransactions;
 
-        //suppose that both kind of transactions is as 50/50
+        //until we don't have any functionality to get real distribution
+        //lets suppose that both kind of transactions is as 50/50
         //in such case vector reallocation may be just once
         //but we spent less memory at least on mempool.mapTx.size()/2
         vecPriority.reserve(mempool.mapTx.size()/2);
